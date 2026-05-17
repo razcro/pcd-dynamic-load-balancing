@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dynamic Load Balancing Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px;
+      background: linear-gradient(135deg, #0f172a, #111827);
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+    }
+
+    p {
+      margin: 0;
+      color: #a3a3a3;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    .metric {
+      font-size: 30px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+
+    .label {
+      color: #94a3b8;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    }
+
+    th {
+      color: #cbd5e1;
+      background: rgba(30, 41, 59, 0.8);
+    }
+
+    .healthy {
+      color: #4ade80;
+      font-weight: 700;
+    }
+
+    .unhealthy {
+      color: #fb7185;
+      font-weight: 700;
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #e5e7eb;
+      color: #111827;
+      margin-right: 8px;
+    }
+
+    input {
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      border-radius: 10px;
+      padding: 9px;
+      width: 80px;
+      margin-right: 8px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Dynamic Load Balancing for a Real-Time Analytics Dashboard</h1>
+    <p>Live view of request routing, worker health, latency scores, and failure behavior.</p>
+  </header>
+
+  <section class="grid">
+    <div class="card">
+      <div class="label">Algorithm</div>
+      <div class="metric" id="algorithm">-</div>
+    </div>
+    <div class="card">
+      <div class="label">Total Requests</div>
+      <div class="metric" id="totalRequests">0</div>
+    </div>
+    <div class="card">
+      <div class="label">Failure Rate</div>
+      <div class="metric" id="failureRate">0%</div>
+    </div>
+    <div class="card">
+      <div class="label">Average Latency</div>
+      <div class="metric" id="avgLatency">0 ms</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="label">Generate test traffic</div>
+    <div class="controls">
+      <label>delay ms <input id="delayMs" type="number" value="50"></label>
+      <label>cpu ms <input id="cpuMs" type="number" value="5"></label>
+      <button onclick="sendOne()">Send one event</button>
+      <button onclick="toggleTraffic()" id="toggleButton">Start traffic</button>
+    </div>
+  </section>
+
+  <br>
+
+  <section class="card">
+    <div class="label">Workers</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Worker</th>
+          <th>Health</th>
+          <th>In-flight</th>
+          <th>EWMA latency</th>
+          <th>Score</th>
+          <th>Total requests</th>
+          <th>Failed requests</th>
+        </tr>
+      </thead>
+      <tbody id="workerRows"></tbody>
+    </table>
+  </section>
+
+  <script>
+    let trafficTimer = null;
+
+    async function refresh() {
+      const response = await fetch('/lb/stats');
+      const data = await response.json();
+
+      document.getElementById('algorithm').textContent = data.algorithm;
+      document.getElementById('totalRequests').textContent = data.total_requests;
+      document.getElementById('failureRate').textContent = `${(data.failure_rate * 100).toFixed(2)}%`;
+      document.getElementById('avgLatency').textContent = `${data.average_latency_ms} ms`;
+
+      const rows = data.workers.map(worker => `
+        <tr>
+          <td>${worker.name}</td>
+          <td class="${worker.healthy ? 'healthy' : 'unhealthy'}">${worker.healthy ? 'healthy' : 'unhealthy'}</td>
+          <td>${worker.in_flight}</td>
+          <td>${worker.ewma_latency_ms} ms</td>
+          <td>${worker.score}</td>
+          <td>${worker.total_requests}</td>
+          <td>${worker.failed_requests}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('workerRows').innerHTML = rows;
+    }
+
+    async function sendOne() {
+      const delayMs = document.getElementById('delayMs').value;
+      const cpuMs = document.getElementById('cpuMs').value;
+      await fetch(`/api/v1/analytics/event?delay_ms=${delayMs}&cpu_ms=${cpuMs}`);
+      await refresh();
+    }
+
+    function toggleTraffic() {
+      const button = document.getElementById('toggleButton');
+
+      if (trafficTimer) {
+        clearInterval(trafficTimer);
+        trafficTimer = null;
+        button.textContent = 'Start traffic';
+        return;
+      }
+
+      trafficTimer = setInterval(() => {
+        sendOne().catch(console.error);
+      }, 150);
+
+      button.textContent = 'Stop traffic';
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

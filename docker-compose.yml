@@ -1,0 +1,79 @@
+services:
+  worker-1:
+    build:
+      context: ./worker
+    environment:
+      INSTANCE_ID: worker-1
+      PORT: 8000
+      SLOWDOWN_FACTOR: "1.0"
+      ERROR_RATE: "0.0"
+    ports:
+      - "3101:8000"
+
+  worker-2:
+    build:
+      context: ./worker
+    environment:
+      INSTANCE_ID: worker-2
+      PORT: 8000
+      SLOWDOWN_FACTOR: "1.0"
+      ERROR_RATE: "0.0"
+    ports:
+      - "3102:8000"
+
+  worker-3:
+    build:
+      context: ./worker
+    environment:
+      INSTANCE_ID: worker-3
+      PORT: 8000
+      SLOWDOWN_FACTOR: "2.5"
+      ERROR_RATE: "0.0"
+    ports:
+      - "3103:8000"
+
+  load-balancer:
+    build:
+      context: ./load-balancer
+    environment:
+      PORT: 8080
+      ALGORITHM: ${ALGORITHM:-round_robin}
+      WORKERS: worker-1=http://worker-1:8000,worker-2=http://worker-2:8000,worker-3=http://worker-3:8000
+      HEALTH_PATH: /api/v1/health
+      REQUEST_TIMEOUT_MS: 5000
+      HEALTH_TIMEOUT_MS: 800
+      HEALTH_CHECK_INTERVAL_MS: 1000
+      EWMA_ALPHA: 0.25
+    depends_on:
+      - worker-1
+      - worker-2
+      - worker-3
+    ports:
+      - "8080:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - load-balancer
+    ports:
+      - "9090:9090"
+
+  k6:
+    image: grafana/k6:0.55.0
+    profiles:
+      - loadtest
+    volumes:
+      - ./load-tests:/scripts:ro
+      - ./results:/results
+    environment:
+      BASE_URL: http://load-balancer:8080
+      VUS: 30
+      DURATION: 60s
+      DELAY_MS: 40
+      CPU_MS: 5
+      FAIL_RATE: 0
+    depends_on:
+      - load-balancer
+    command: run --summary-export /results/k6-summary.json /scripts/k6-load-balancing.js

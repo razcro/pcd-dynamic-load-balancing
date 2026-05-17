@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 2s
+
+scrape_configs:
+  - job_name: "dynamic-load-balancer"
+    metrics_path: "/lb/metrics"
+    static_configs:
+      - targets: ["load-balancer:8080"]
