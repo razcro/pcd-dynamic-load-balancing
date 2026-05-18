@@ -27,6 +27,14 @@
       margin: 0 0 8px;
     }
 
+    h2 {
+      font-size: 15px;
+      margin: 0 0 14px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
     p {
       margin: 0;
       color: #a3a3a3;
@@ -45,6 +53,7 @@
       border-radius: 18px;
       padding: 18px;
       box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+      margin-bottom: 16px;
     }
 
     .metric {
@@ -78,36 +87,41 @@
       background: rgba(30, 41, 59, 0.8);
     }
 
-    .healthy {
-      color: #4ade80;
-      font-weight: 700;
-    }
-
-    .unhealthy {
-      color: #fb7185;
-      font-weight: 700;
-    }
+    .healthy  { color: #4ade80; font-weight: 700; }
+    .unhealthy { color: #fb7185; font-weight: 700; }
 
     button {
       border: 0;
       border-radius: 12px;
-      padding: 10px 14px;
+      padding: 10px 16px;
       font-weight: 700;
       cursor: pointer;
       background: #e5e7eb;
       color: #111827;
       margin-right: 8px;
+      font-size: 14px;
     }
 
-    input {
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    button.danger { background: #fb7185; color: #1a0510; }
+    button.primary { background: #38bdf8; color: #0c1a2e; }
+
+    input, select {
       border: 1px solid rgba(148, 163, 184, 0.4);
       background: rgba(15, 23, 42, 0.9);
       color: #e5e7eb;
       border-radius: 10px;
-      padding: 9px;
+      padding: 9px 10px;
       width: 80px;
       margin-right: 8px;
+      font-size: 14px;
     }
+
+    select { width: auto; }
 
     .controls {
       display: flex;
@@ -116,6 +130,42 @@
       align-items: center;
       margin-top: 12px;
     }
+
+    .badge {
+      display: inline-block;
+      border-radius: 8px;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-idle    { background: rgba(148,163,184,0.2); color: #94a3b8; }
+    .badge-running { background: rgba(56,189,248,0.2);  color: #38bdf8; }
+    .badge-done    { background: rgba(74,222,128,0.2);  color: #4ade80; }
+    .badge-failed  { background: rgba(251,113,133,0.2); color: #fb7185; }
+    .badge-stopped { background: rgba(251,191,36,0.2);  color: #fbbf24; }
+
+    #testOutput {
+      margin-top: 14px;
+      background: #0a101e;
+      border: 1px solid rgba(148,163,184,0.2);
+      border-radius: 12px;
+      padding: 14px;
+      font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #a3e6b0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 340px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .scenario-desc { color: #64748b; font-size: 12px; margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -124,6 +174,7 @@
     <p>Live view of request routing, worker health, latency scores, and failure behavior.</p>
   </header>
 
+  <!-- Metrics -->
   <section class="grid">
     <div class="card">
       <div class="label">Algorithm</div>
@@ -143,8 +194,9 @@
     </div>
   </section>
 
+  <!-- Traffic generator -->
   <section class="card">
-    <div class="label">Generate test traffic</div>
+    <h2>Generate test traffic</h2>
     <div class="controls">
       <label>delay ms <input id="delayMs" type="number" value="50"></label>
       <label>cpu ms <input id="cpuMs" type="number" value="5"></label>
@@ -153,10 +205,46 @@
     </div>
   </section>
 
-  <br>
-
+  <!-- k6 load test runner -->
   <section class="card">
-    <div class="label">Workers</div>
+    <h2>Load test scenarios
+      <span id="testBadge" class="badge badge-idle" style="margin-left:10px">idle</span>
+      <span id="testElapsed" style="color:#64748b;font-size:12px;margin-left:8px"></span>
+    </h2>
+
+    <div class="controls">
+      <div>
+        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">Scenario</label>
+        <select id="scenarioSelect" onchange="onScenarioChange()">
+          <option value="constant">constant — 30 VUs, 60s baseline</option>
+          <option value="spike">spike — 10→80 VUs burst</option>
+          <option value="stress">stress — ramp to 150 VUs</option>
+          <option value="failure">failure — crash worker-2 at 20s</option>
+        </select>
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">VUs</label>
+        <input id="vus" type="number" value="30" min="1" max="200" style="width:64px">
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">Duration</label>
+        <input id="duration" type="text" value="60s" style="width:64px">
+      </div>
+    </div>
+
+    <div class="controls" style="margin-top:14px">
+      <button class="primary" id="runBtn" onclick="runTest()">Run test</button>
+      <button class="danger" id="stopBtn" onclick="stopTest()" disabled>Stop</button>
+    </div>
+
+    <p class="scenario-desc" id="scenarioDesc">30 VUs constant load for 60 seconds — baseline comparison across algorithms.</p>
+
+    <div id="testOutput"></div>
+  </section>
+
+  <!-- Workers table -->
+  <section class="card">
+    <h2>Workers</h2>
     <table>
       <thead>
         <tr>
@@ -174,6 +262,7 @@
   </section>
 
   <script>
+    // ── Traffic generator ──────────────────────────────────────────────────────
     let trafficTimer = null;
 
     async function refresh() {
@@ -209,23 +298,127 @@
 
     function toggleTraffic() {
       const button = document.getElementById('toggleButton');
-
       if (trafficTimer) {
         clearInterval(trafficTimer);
         trafficTimer = null;
         button.textContent = 'Start traffic';
         return;
       }
-
-      trafficTimer = setInterval(() => {
-        sendOne().catch(console.error);
-      }, 150);
-
+      trafficTimer = setInterval(() => sendOne().catch(console.error), 150);
       button.textContent = 'Stop traffic';
     }
 
+    // ── Load test runner ───────────────────────────────────────────────────────
+    const SCENARIO_DESCS = {
+      constant: '30 VUs constant load for 60 seconds — baseline comparison across algorithms.',
+      spike:    'Traffic spike: ramps from 10 to 80 VUs in 5 seconds — tests burst resilience.',
+      stress:   'Gradually ramps from 5 to 150 VUs over 70 seconds — finds the saturation point.',
+      failure:  '30 VUs constant load; worker-2 is crashed at the 20-second mark — tests failure recovery.',
+    };
+
+    let outputLineCount = 0;
+    let testPoller = null;
+
+    function onScenarioChange() {
+      const s = document.getElementById('scenarioSelect').value;
+      document.getElementById('scenarioDesc').textContent = SCENARIO_DESCS[s] || '';
+    }
+
+    async function runTest() {
+      const scenario  = document.getElementById('scenarioSelect').value;
+      const vus       = document.getElementById('vus').value;
+      const duration  = document.getElementById('duration').value;
+
+      outputLineCount = 0;
+      const out = document.getElementById('testOutput');
+      out.textContent = '';
+      out.style.display = 'block';
+
+      const resp = await fetch(
+        `/tests/run?scenario=${scenario}&vus=${vus}&duration=${duration}`,
+        { method: 'POST' }
+      );
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        out.textContent = `Error: ${err.detail || JSON.stringify(err)}`;
+        return;
+      }
+
+      setTestRunning(true);
+      startOutputPoller();
+    }
+
+    async function stopTest() {
+      await fetch('/tests/stop', { method: 'POST' });
+    }
+
+    function setTestRunning(running) {
+      document.getElementById('runBtn').disabled  = running;
+      document.getElementById('stopBtn').disabled = !running;
+    }
+
+    function startOutputPoller() {
+      if (testPoller) clearInterval(testPoller);
+      testPoller = setInterval(pollOutput, 800);
+    }
+
+    async function pollOutput() {
+      let status, data;
+      try {
+        const resp = await fetch(`/tests/output?since=${outputLineCount}`);
+        data = await resp.json();
+        status = data.status;
+      } catch {
+        return;
+      }
+
+      const out = document.getElementById('testOutput');
+      if (data.lines && data.lines.length > 0) {
+        out.textContent += data.lines.join('\n') + '\n';
+        outputLineCount = data.total;
+        out.scrollTop = out.scrollHeight;
+      }
+
+      // Update badge
+      const badge = document.getElementById('testBadge');
+      badge.className = `badge badge-${status}`;
+      badge.textContent = status;
+
+      // Update elapsed from status endpoint
+      try {
+        const sr = await fetch('/tests/status');
+        const sd = await sr.json();
+        const el = document.getElementById('testElapsed');
+        el.textContent = sd.elapsed_s !== null ? `${sd.elapsed_s}s` : '';
+      } catch {}
+
+      if (status !== 'running') {
+        clearInterval(testPoller);
+        testPoller = null;
+        setTestRunning(false);
+      }
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
     refresh();
     setInterval(refresh, 1000);
+
+    // Restore test status on page load (in case of refresh mid-test)
+    (async () => {
+      try {
+        const resp = await fetch('/tests/status');
+        const data = await resp.json();
+        if (data.status === 'running') {
+          document.getElementById('testOutput').style.display = 'block';
+          setTestRunning(true);
+          startOutputPoller();
+        }
+        const badge = document.getElementById('testBadge');
+        badge.className = `badge badge-${data.status}`;
+        badge.textContent = data.status;
+      } catch {}
+    })();
   </script>
 </body>
 </html>

@@ -8,7 +8,7 @@ services:
       SLOWDOWN_FACTOR: "1.0"
       ERROR_RATE: "0.0"
     ports:
-      - "3101:8000"
+      - "3201:8000"
 
   worker-2:
     build:
@@ -19,7 +19,7 @@ services:
       SLOWDOWN_FACTOR: "1.0"
       ERROR_RATE: "0.0"
     ports:
-      - "3102:8000"
+      - "3202:8000"
 
   worker-3:
     build:
@@ -27,10 +27,10 @@ services:
     environment:
       INSTANCE_ID: worker-3
       PORT: 8000
-      SLOWDOWN_FACTOR: "2.5"
+      SLOWDOWN_FACTOR: "4.0"
       ERROR_RATE: "0.0"
     ports:
-      - "3103:8000"
+      - "3203:8000"
 
   load-balancer:
     build:
@@ -40,16 +40,30 @@ services:
       ALGORITHM: ${ALGORITHM:-round_robin}
       WORKERS: worker-1=http://worker-1:8000,worker-2=http://worker-2:8000,worker-3=http://worker-3:8000
       HEALTH_PATH: /api/v1/health
-      REQUEST_TIMEOUT_MS: 5000
+      REQUEST_TIMEOUT_MS: 2000
       HEALTH_TIMEOUT_MS: 800
       HEALTH_CHECK_INTERVAL_MS: 1000
       EWMA_ALPHA: 0.25
+      TEST_RUNNER_URL: http://test-runner:8181
     depends_on:
       - worker-1
       - worker-2
       - worker-3
     ports:
-      - "8080:8080"
+      - "8787:8080"
+
+  test-runner:
+    build:
+      context: ./test-runner
+    environment:
+      PORT: 8181
+      BASE_URL: http://load-balancer:8080
+      WORKER2_URL: http://worker-2:8000
+    volumes:
+      - ./load-tests:/scripts:ro
+      - ./results:/results
+    depends_on:
+      - load-balancer
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -58,7 +72,7 @@ services:
     depends_on:
       - load-balancer
     ports:
-      - "9090:9090"
+      - "9191:9090"
 
   grafana:
     image: grafana/grafana:11.3.0
@@ -73,7 +87,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3000:3000"
+      - "3333:3000"
 
   k6:
     image: grafana/k6:0.55.0

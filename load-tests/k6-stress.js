@@ -8,16 +8,17 @@ export const options = {
       executor: "ramping-vus",
       startVUs: 5,
       stages: [
-        { duration: "15s", target: 20 },
-        { duration: "15s", target: 50 },
-        { duration: "15s", target: 100 },
+        { duration: "15s", target: 30 },
+        { duration: "15s", target: 80 },
         { duration: "15s", target: 150 },
+        { duration: "15s", target: 300 },
         { duration: "10s", target: 10 }
       ]
     }
   },
   thresholds: {
-    http_req_duration: ["p(95)<5000"]
+    http_req_duration: ["p(95)<5000"],
+    error_rate: ["rate<0.50"]
   }
 };
 
@@ -28,7 +29,7 @@ const worker2 = new Counter("worker_2_requests");
 const worker3 = new Counter("worker_3_requests");
 
 export default function () {
-  const baseUrl = __ENV.BASE_URL || "http://localhost:8080";
+  const baseUrl = __ENV.BASE_URL || "http://localhost:8787";
   const delayMs = __ENV.DELAY_MS || "40";
   const cpuMs = __ENV.CPU_MS || "5";
 

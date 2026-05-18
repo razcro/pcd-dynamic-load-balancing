@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 ALGORITHM = os.getenv("ALGORITHM", "round_robin")
 PORT = int(os.getenv("PORT", "8080"))
 WORKERS_ENV = os.getenv("WORKERS", "")
+TEST_RUNNER_URL = os.getenv("TEST_RUNNER_URL", "http://test-runner:8181")
 HEALTH_PATH = os.getenv("HEALTH_PATH", "/api/v1/health")
 REQUEST_TIMEOUT_MS = int(os.getenv("REQUEST_TIMEOUT_MS", "5000"))
 HEALTH_TIMEOUT_MS = int(os.getenv("HEALTH_TIMEOUT_MS", "800"))
@@ -77,6 +78,7 @@ app = FastAPI(title="Dynamic Load Balancer")
 
 client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_MS / 1000.0)
 health_client = httpx.AsyncClient(timeout=HEALTH_TIMEOUT_MS / 1000.0)
+test_runner_client = httpx.AsyncClient(timeout=120.0)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -132,7 +134,6 @@ async def run_health_check(worker: Worker) -> None:
         duration_ms = (time.perf_counter() - started) * 1000
         worker.healthy = response.status_code < 500
         worker.last_health_check_at = time.time()
-        worker.ewma_latency_ms = ewma(worker.ewma_latency_ms, duration_ms)
 
         if worker.healthy:
             worker.last_error = None
@@ -160,6 +161,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     await client.aclose()
     await health_client.aclose()
+    await test_runner_client.aclose()
 
 
 def worker_to_dict(worker: Worker) -> Dict[str, object]:
@@ -268,14 +270,15 @@ async def proxy_to_worker(request: Request, worker: Worker) -> Response:
     if query:
         target += f"?{query}"
 
+    worker.in_flight += 1
+    worker.total_requests += 1
+    stats.total_requests += 1
+
     body = await request.body()
     headers = dict(request.headers)
     headers.pop("host", None)
 
     started = time.perf_counter()
-    worker.in_flight += 1
-    worker.total_requests += 1
-    stats.total_requests += 1
 
     try:
         upstream = await client.request(
@@ -335,6 +338,31 @@ async def proxy_to_worker(request: Request, worker: Worker) -> Response:
 
     finally:
         worker.in_flight -= 1
+
+
+@app.api_route("/tests/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_test_runner(path: str, request: Request) -> Response:
+    query = request.url.query
+    target = f"{TEST_RUNNER_URL}/tests/{path}"
+    if query:
+        target += f"?{query}"
+    body = await request.body()
+    headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+    try:
+        resp = await test_runner_client.request(
+            method=request.method,
+            url=target,
+            headers=headers,
+            content=body or None,
+        )
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers={k: v for k, v in resp.headers.items() if k.lower() not in {"content-encoding", "transfer-encoding", "connection"}},
+            media_type=resp.headers.get("content-type"),
+        )
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"error": "test_runner_unavailable", "message": str(exc)})
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

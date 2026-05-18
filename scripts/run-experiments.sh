@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# k6 exits with code 99 when thresholds are breached — that is a valid
+# experiment result, not a script error. We capture it and continue.
+set -uo pipefail
 
 ALGORITHMS=("round_robin" "least_connections" "latency_aware")
 RESULT_DIR="results"
 
 mkdir -p "$RESULT_DIR"
+chmod 777 "$RESULT_DIR"
 
 # --- Scenario 1: Constant Load (baseline comparison) ---
 for algorithm in "${ALGORITHMS[@]}"; do
@@ -13,18 +16,18 @@ for algorithm in "${ALGORITHMS[@]}"; do
   ALGORITHM="$algorithm" docker compose up --build -d
   sleep 8
 
-  docker compose --profile loadtest run --rm \
+  ALGORITHM="$algorithm" docker compose --profile loadtest run --rm \
     -e BASE_URL=http://load-balancer:8080 \
     -e VUS=30 \
     -e DURATION=60s \
     -e DELAY_MS=40 \
     -e CPU_MS=5 \
     -e FAIL_RATE=0 \
-    k6 run --summary-export "/results/${algorithm}-constant-summary.json" /scripts/k6-load-balancing.js
+    k6 run --summary-export "/results/${algorithm}-constant-summary.json" /scripts/k6-load-balancing.js || true
 
-  curl -s "http://localhost:8080/lb/stats" > "${RESULT_DIR}/${algorithm}-constant-stats.json"
-  curl -s "http://localhost:8080/lb/workers" > "${RESULT_DIR}/${algorithm}-constant-workers.json"
-  curl -s "http://localhost:8080/lb/metrics" > "${RESULT_DIR}/${algorithm}-constant-metrics.prom"
+  curl -s "http://localhost:8787/lb/stats"   > "${RESULT_DIR}/${algorithm}-constant-stats.json"
+  curl -s "http://localhost:8787/lb/workers" > "${RESULT_DIR}/${algorithm}-constant-workers.json"
+  curl -s "http://localhost:8787/lb/metrics" > "${RESULT_DIR}/${algorithm}-constant-metrics.prom"
 
   docker compose down
   sleep 3
@@ -37,14 +40,14 @@ for algorithm in "${ALGORITHMS[@]}"; do
   ALGORITHM="$algorithm" docker compose up --build -d
   sleep 8
 
-  docker compose --profile loadtest run --rm \
+  ALGORITHM="$algorithm" docker compose --profile loadtest run --rm \
     -e BASE_URL=http://load-balancer:8080 \
     -e DELAY_MS=40 \
     -e CPU_MS=5 \
-    k6 run --summary-export "/results/${algorithm}-spike-summary.json" /scripts/k6-spike.js
+    k6 run --summary-export "/results/${algorithm}-spike-summary.json" /scripts/k6-spike.js || true
 
-  curl -s "http://localhost:8080/lb/stats" > "${RESULT_DIR}/${algorithm}-spike-stats.json"
-  curl -s "http://localhost:8080/lb/workers" > "${RESULT_DIR}/${algorithm}-spike-workers.json"
+  curl -s "http://localhost:8787/lb/stats"   > "${RESULT_DIR}/${algorithm}-spike-stats.json"
+  curl -s "http://localhost:8787/lb/workers" > "${RESULT_DIR}/${algorithm}-spike-workers.json"
 
   docker compose down
   sleep 3
@@ -57,14 +60,14 @@ for algorithm in "${ALGORITHMS[@]}"; do
   ALGORITHM="$algorithm" docker compose up --build -d
   sleep 8
 
-  docker compose --profile loadtest run --rm \
+  ALGORITHM="$algorithm" docker compose --profile loadtest run --rm \
     -e BASE_URL=http://load-balancer:8080 \
     -e DELAY_MS=40 \
     -e CPU_MS=5 \
-    k6 run --summary-export "/results/${algorithm}-stress-summary.json" /scripts/k6-stress.js
+    k6 run --summary-export "/results/${algorithm}-stress-summary.json" /scripts/k6-stress.js || true
 
-  curl -s "http://localhost:8080/lb/stats" > "${RESULT_DIR}/${algorithm}-stress-stats.json"
-  curl -s "http://localhost:8080/lb/workers" > "${RESULT_DIR}/${algorithm}-stress-workers.json"
+  curl -s "http://localhost:8787/lb/stats"   > "${RESULT_DIR}/${algorithm}-stress-stats.json"
+  curl -s "http://localhost:8787/lb/workers" > "${RESULT_DIR}/${algorithm}-stress-workers.json"
 
   docker compose down
   sleep 3
