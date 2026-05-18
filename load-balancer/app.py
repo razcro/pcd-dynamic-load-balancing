@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import os
 import time
 from dataclasses import dataclass, field
@@ -38,12 +39,16 @@ class Worker:
     last_error: Optional[str] = None
 
 
+LATENCY_WINDOW_SIZE = 1000
+
+
 @dataclass
 class GlobalStats:
     total_requests: int = 0
     failed_requests: int = 0
     duration_ms_sum: float = 0.0
     by_status: Dict[str, int] = field(default_factory=dict)
+    latency_window: collections.deque = field(default_factory=lambda: collections.deque(maxlen=LATENCY_WINDOW_SIZE))
 
 
 def parse_workers(value: str) -> List[Worker]:
@@ -74,6 +79,15 @@ client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_MS / 1000.0)
 health_client = httpx.AsyncClient(timeout=HEALTH_TIMEOUT_MS / 1000.0)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+def percentile(data: collections.deque, p: float) -> float:
+    if not data:
+        return 0.0
+    sorted_data = sorted(data)
+    index = int(len(sorted_data) * p / 100.0)
+    index = min(index, len(sorted_data) - 1)
+    return sorted_data[index]
 
 
 def ewma(old_value: float, new_value: float) -> float:
@@ -202,6 +216,8 @@ async def lb_stats() -> Dict[str, object]:
         "failed_requests": stats.failed_requests,
         "failure_rate": round(stats.failed_requests / stats.total_requests, 4) if stats.total_requests else 0.0,
         "average_latency_ms": round(avg_latency, 2),
+        "p95_latency_ms": round(percentile(stats.latency_window, 95), 2),
+        "p99_latency_ms": round(percentile(stats.latency_window, 99), 2),
         "by_status": stats.by_status,
         "workers": [worker_to_dict(worker) for worker in workers],
     }
@@ -222,6 +238,14 @@ async def lb_metrics() -> PlainTextResponse:
     lines.append("# HELP lb_request_duration_ms_sum Sum of request durations in milliseconds.")
     lines.append("# TYPE lb_request_duration_ms_sum counter")
     lines.append(f'lb_request_duration_ms_sum{{algorithm="{ALGORITHM}"}} {stats.duration_ms_sum}')
+
+    lines.append("# HELP lb_request_latency_p95_ms 95th percentile latency over last 1000 requests.")
+    lines.append("# TYPE lb_request_latency_p95_ms gauge")
+    lines.append(f'lb_request_latency_p95_ms{{algorithm="{ALGORITHM}"}} {percentile(stats.latency_window, 95):.2f}')
+
+    lines.append("# HELP lb_request_latency_p99_ms 99th percentile latency over last 1000 requests.")
+    lines.append("# TYPE lb_request_latency_p99_ms gauge")
+    lines.append(f'lb_request_latency_p99_ms{{algorithm="{ALGORITHM}"}} {percentile(stats.latency_window, 99):.2f}')
 
     for worker in workers:
         lines.append(f'lb_worker_healthy{{name="{worker.name}"}} {1 if worker.healthy else 0}')
@@ -264,6 +288,7 @@ async def proxy_to_worker(request: Request, worker: Worker) -> Response:
         duration_ms = (time.perf_counter() - started) * 1000
         worker.ewma_latency_ms = ewma(worker.ewma_latency_ms, duration_ms)
         stats.duration_ms_sum += duration_ms
+        stats.latency_window.append(duration_ms)
 
         status_key = str(upstream.status_code)
         stats.by_status[status_key] = stats.by_status.get(status_key, 0) + 1
