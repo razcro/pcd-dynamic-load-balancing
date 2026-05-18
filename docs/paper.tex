@@ -9,10 +9,10 @@
 \title{Dynamic Load Balancing for a Real-Time Analytics Dashboard: A Comparative Evaluation of Round-Robin, Least-Connections, and Latency-Aware Routing}
 
 \author{
-\IEEEauthorblockN{Author 1, Author 2, Author 3}
-\IEEEauthorblockA{Faculty of Mathematics and Computer Science\\
-Babe\c{s}-Bolyai University, Cluj-Napoca, Romania\\
-\{author1, author2, author3\}@stud.ubbcluj.ro}
+\IEEEauthorblockN{Ana Maria Floristean, Razvan-Constantin Croitoru}
+\IEEEauthorblockA{Faculty of Computer Science\\
+Alexandru Ioan Cuza University, Ia\c{s}i, Romania\\
+anafloris23@gmail.com, croitorurazvan1@gmail.com}
 }
 
 \begin{document}
@@ -20,36 +20,34 @@ Babe\c{s}-Bolyai University, Cluj-Napoca, Romania\\
 \maketitle
 
 \begin{abstract}
-Distributed systems that serve real-time analytics need to spread incoming requests across multiple backend workers without creating hotspots or slowing down responses. In this paper, we build a containerized testbed with three worker services and a custom load balancer that supports three routing algorithms: static round-robin, least-connections, and a latency-aware strategy based on Exponentially Weighted Moving Average (EWMA) scoring. We compare these algorithms under four scenarios: constant load, traffic spikes, gradual stress increase, and worker failure injection. Our results show that the latency-aware algorithm gives the best trade-off between low tail latency and fair distribution, especially when workers have different processing speeds or when one of them crashes. The least-connections algorithm performs well under uniform conditions but struggles with heterogeneous workers. Round-robin is simple and predictable but cannot adapt to changing conditions.
+Distributed systems that serve real-time analytics must spread incoming requests across multiple backend workers without creating hotspots or causing cascading failures. In this paper, we build a containerised testbed with three worker services -- two fast workers and one intentionally degraded worker with a 4$\times$ slowdown factor -- and a custom load balancer supporting three routing algorithms: static round-robin, least-connections, and a latency-aware strategy based on Exponentially Weighted Moving Average (EWMA) scoring. We compare these algorithms under four scenarios: constant load, traffic spikes, progressive stress to 300 virtual users, and worker failure injection. Our results show clear and meaningful differentiation between algorithms. Under constant moderate load (30 VUs), the latency-aware algorithm routes only 5\% of traffic to the slow worker (vs.\ 33\% for round-robin), yielding 30\% lower average latency and 19\% higher throughput. Under extreme stress (300 VUs), both adaptive algorithms sustain over 229~req/s with under 2\% failures, while round-robin reaches only 173~req/s with 7.6\% failures and drives all workers into an unhealthy state. In the failure-injection scenario, the latency-aware algorithm detects the crashed worker within one health-check interval and reroutes traffic with just 0.01\% overall failures. These findings confirm that adaptive routing algorithms provide substantial benefits both under normal conditions and at saturation.
 \end{abstract}
 
 \section{Introduction}
 
 When you have a web application that gets a lot of traffic, you cannot run everything on a single server. You need multiple backend servers (we call them ``workers'') to share the load. The component that decides which worker gets each request is called a \textit{load balancer}.
 
-The simplest approach is round-robin: send the first request to worker 1, the second to worker 2, the third to worker 3, then go back to worker 1, and so on. This works fine when all workers are identical and equally fast. But in reality, workers might have different hardware, some might be slower due to garbage collection pauses, or one might crash entirely.
+The simplest approach is round-robin: send the first request to worker 1, the second to worker 2, the third to worker 3, then cycle back. This works well when all workers are identical and equally fast. In reality, workers may have different hardware, suffer from garbage-collection pauses, or crash entirely.
 
-Dynamic load balancing means the system watches what is happening in real time (how fast each worker responds, how many requests are queued) and uses that information to make smarter routing decisions.
+Dynamic load balancing means the system watches real-time signals -- response time, queue depth -- and uses that information to make smarter routing decisions.
 
-Our research question is: \textbf{Which dynamic load-balancing strategy provides the best trade-off between responsiveness, stability, and overhead in a distributed real-time analytics dashboard under variable workload, heterogeneous workers, and failures?}
+Our research question is: \textbf{Which load-balancing strategy provides the best trade-off between throughput, tail latency, and reliability in a distributed real-time analytics system under variable workload, heterogeneous workers, and failures?}
 
-To answer this, we built a containerized distributed system from scratch and ran controlled experiments comparing three algorithms. This paper presents the system design, the experiment methodology, and the results.
+To answer this we built a containerised distributed system from scratch and ran controlled experiments comparing three algorithms. A key finding is that even with only three workers and a 4$\times$ performance gap, adaptive algorithms measurably outperform round-robin across all tested conditions.
 
 \section{Related Work}
 
-Load balancing is a well-studied problem. NGINX \cite{nginx} and HAProxy \cite{haproxy} are two widely-used production load balancers that support many algorithms. Kubernetes \cite{kubernetes} has its own built-in load balancing through Services.
+Load balancing is a well-studied problem. NGINX \cite{nginx} and HAProxy \cite{haproxy} are two widely-used production load balancers that support many algorithms. Kubernetes \cite{kubernetes} has built-in load balancing through Services.
 
 The classic algorithms include:
 \begin{itemize}
-    \item \textbf{Round-robin}: cycles through workers in order. Simple but blind to actual load \cite{tanenbaum}.
-    \item \textbf{Least-connections}: picks the worker handling the fewest requests right now. Better under uneven loads \cite{cardellini}.
+    \item \textbf{Round-robin}: cycles through workers in order -- simple but blind to actual load \cite{tanenbaum}.
+    \item \textbf{Least-connections}: picks the worker with the fewest active requests -- better under uneven loads \cite{cardellini}.
     \item \textbf{Weighted strategies}: assign weights based on worker capacity or measured performance \cite{pai1998}.
-    \item \textbf{Latency-based}: use response time measurements to prefer faster workers. Envoy Proxy \cite{envoy} uses this approach.
+    \item \textbf{Latency-based}: use response-time measurements to prefer faster workers; Envoy Proxy \cite{envoy} uses EWMA for this.
 \end{itemize}
 
-Our latency-aware algorithm is inspired by Envoy's approach of using EWMA (Exponentially Weighted Moving Average) to smooth out latency measurements, combined with a queue-depth penalty similar to what is described in \cite{mitzenmacher2001}.
-
-The key difference in our project is that we focus on a specific use case (real-time analytics) and we evaluate under failure conditions, which many benchmark studies skip.
+Our latency-aware algorithm follows Envoy's EWMA approach combined with a queue-depth penalty similar to \cite{mitzenmacher2001}. The key difference in our work is that we study a heterogeneous scenario (one worker with 4$\times$ slowdown) and analyse how in-flight tracking must be done correctly -- specifically, the in-flight counter must be incremented \emph{before} any \texttt{await} yield point, and health-check latency must not pollute the EWMA used for routing.
 
 \section{System Design}
 
@@ -58,64 +56,59 @@ The key difference in our project is that we focus on a specific use case (real-
 Our system has four main components:
 
 \begin{enumerate}
-    \item \textbf{Workers} (3 instances): FastAPI services that simulate analytics event processing. Each worker can introduce configurable delay (simulating I/O) and CPU work.
-    \item \textbf{Load Balancer}: A custom FastAPI reverse proxy that intercepts all client traffic and forwards it to a selected worker.
-    \item \textbf{Monitoring}: Prometheus scrapes metrics from the load balancer every 2 seconds. Grafana provides dashboards.
-    \item \textbf{Load Generator}: k6 generates synthetic HTTP traffic with configurable virtual users, duration, and request parameters.
+    \item \textbf{Workers} (3 instances): FastAPI services that simulate analytics event processing. Each worker can introduce configurable blocking CPU work and asynchronous I/O delay.
+    \item \textbf{Load Balancer}: A custom FastAPI reverse proxy that intercepts all client requests and forwards them to a selected worker based on the active algorithm.
+    \item \textbf{Monitoring}: Prometheus scrapes metrics from the load balancer every 2 seconds. Grafana provides real-time dashboards.
+    \item \textbf{Load Generator}: k6 generates synthetic HTTP traffic with configurable virtual users, duration, and per-request parameters.
 \end{enumerate}
 
-Everything runs in Docker containers orchestrated by Docker Compose.
+Everything runs in Docker containers orchestrated by Docker Compose on a single host.
 
 \subsection{Worker Service}
 
 Each worker exposes:
 \begin{itemize}
     \item \texttt{/api/v1/health} -- health check endpoint
-    \item \texttt{/api/v1/analytics/event} -- processes an analytics event with configurable delay and CPU usage
+    \item \texttt{/api/v1/analytics/event} -- processes an analytics event with configurable \texttt{delay\_ms} (async sleep) and \texttt{cpu\_ms} (synchronous busy-loop)
     \item \texttt{/api/v1/crash} -- kills the process (for failure testing)
 \end{itemize}
 
-Workers accept parameters \texttt{delay\_ms} and \texttt{cpu\_ms} which control how long each request takes. A \texttt{SLOWDOWN\_FACTOR} environment variable multiplies these values, allowing us to simulate heterogeneous hardware (e.g., worker-3 runs at 2.5x slowdown).
+A \texttt{SLOWDOWN\_FACTOR} environment variable scales both parameters. Worker-3 uses \texttt{SLOWDOWN\_FACTOR=4}, so a request with \texttt{delay\_ms=40} and \texttt{cpu\_ms=5} triggers 160\,ms of async sleep followed by 20\,ms of synchronous CPU work -- approximately 180\,ms total, compared to 45\,ms for the fast workers. The busy-loop runs on the Python asyncio event-loop thread, blocking all other coroutines for its duration.
 
 \subsection{Load Balancer Algorithms}
 
 \subsubsection{Round-Robin (Baseline)}
-Cycles through healthy workers in order. Uses a shared counter with an async lock to ensure thread safety. When a worker becomes unhealthy, it is removed from the rotation.
+Cycles through healthy workers in order. Uses a shared counter with an async lock. Workers marked unhealthy are skipped.
 
 \subsubsection{Least-Connections}
-Selects the worker with the fewest in-flight (currently active) requests. Ties are broken by EWMA latency. This is adaptive because it naturally avoids overloading a slow worker since slow workers finish requests later and accumulate more in-flight connections.
+Selects the worker with the fewest in-flight requests. Ties broken by EWMA latency. Adapts to slow workers because slow workers accumulate more in-flight connections and are thus naturally deprioritised.
 
 \subsubsection{Latency-Aware (EWMA + Queue Penalty)}
 Computes a score for each worker:
 
 \begin{equation}
-    \text{score}(w) = \text{ewma\_latency}(w) + 20 \times \text{in\_flight}(w) + 5 \times \text{failed}(w)
+    \text{score}(w) = \text{ewma\_latency}(w) + 5 \times \text{in\_flight}(w)
 \end{equation}
 
-The worker with the lowest score gets the request. The EWMA latency is updated after every request and every health check using:
+The worker with the lowest score is selected. EWMA is updated after every completed request (not during health checks, which would pollute the routing signal):
 
 \begin{equation}
-    \text{ewma}_{new} = \alpha \times \text{measured} + (1 - \alpha) \times \text{ewma}_{old}
+    \text{ewma}_{new} = \alpha \times \text{measured} + (1 - \alpha) \times \text{ewma}_{old}, \quad \alpha = 0.25
 \end{equation}
 
-where $\alpha = 0.25$. This gives more weight to recent measurements while not overreacting to a single slow request.
+An important implementation detail: the in-flight counter is incremented \emph{before} reading the request body (an asyncio yield point), ensuring that concurrent coroutines see accurate in-flight counts when selecting a worker.
 
 \subsection{Health Checking}
 
-The load balancer runs a background health check loop that pings every worker every second. If a worker fails to respond or returns a 5xx status, it is marked unhealthy and removed from the candidate pool. When it recovers, it automatically re-enters the pool.
+A background loop pings every worker via \texttt{GET /api/v1/health} every 1\,s with an 800\,ms timeout. If a worker fails to respond or returns 5xx, it is marked unhealthy and removed from the candidate pool. Recovery is automatic on the next successful check.
 
 \subsection{Metrics and Observability}
 
-The load balancer exposes Prometheus-compatible metrics at \texttt{/lb/metrics}:
-\begin{itemize}
-    \item Total and failed request counts
-    \item Latency sum, p95, and p99
-    \item Per-worker: health status, in-flight count, EWMA latency, score, request count
-\end{itemize}
+The load balancer exposes Prometheus-format metrics at \texttt{/lb/metrics}, including total and failed request counts, p95/p99 latency over a rolling 1000-request window, and per-worker health, in-flight, EWMA latency, score, and request counts. A web-based control panel allows operators to trigger k6 load-test scenarios from the browser and stream their output in real time.
 
 \section{Integrated Specification}
 
-Table~\ref{tab:requirements} shows the system requirements and how they are verified.
+Table~\ref{tab:requirements} lists the system requirements and how each is verified.
 
 \begin{table}[h]
 \caption{System Requirements}
@@ -145,147 +138,176 @@ R11 & Reproducible results & Should & Script execution \\
 
 \subsection{Environment}
 
-All experiments run on Docker Desktop with Docker Compose. The host machine has [TODO: fill in your machine specs, e.g., ``an Apple M1 Pro with 16 GB RAM'' or ``an Intel i7-12700H with 32 GB RAM''].
+All experiments run on a personal home server with an Intel Core i5-7500T CPU (2.70\,GHz, 4~cores) and 15\,GB RAM running Debian Linux with Docker Compose. Container-to-container network latency is sub-millisecond and negligible compared to request delays. Each scenario is run independently: the full stack is torn down and rebuilt between runs to ensure clean state.
+
+\subsection{Workload Parameters}
+
+Each request carries \texttt{delay\_ms=40} and \texttt{cpu\_ms=5}. For workers 1 and 2 this means 40\,ms of async sleep followed by 5\,ms of synchronous CPU work per request -- approximately 45\,ms total response time. For worker-3 (\texttt{SLOWDOWN\_FACTOR=4}) this becomes 160\,ms of async sleep followed by 20\,ms of synchronous CPU blocking -- approximately 180\,ms total, a 4$\times$ slowdown. The load balancer's request timeout is 2000\,ms; any request that does not complete in time returns a 502 error.
 
 \subsection{Scenarios}
 
 \begin{enumerate}
-    \item \textbf{Constant Load}: 30 virtual users, 60 seconds, \texttt{delay\_ms=40}, \texttt{cpu\_ms=5}. Worker-3 has \texttt{SLOWDOWN\_FACTOR=2.5} (heterogeneous by default).
-    \item \textbf{Traffic Spike}: Ramps from 10 to 80 VUs in 5 seconds, holds for 30 seconds, then drops back.
-    \item \textbf{Stress Test}: Gradually increases from 5 to 150 VUs over 70 seconds to find the saturation point.
-    \item \textbf{Failure Injection}: Constant 30 VUs while worker-2 is killed at the 20-second mark. Measures recovery behavior.
+    \item \textbf{Constant Load}: 30 VUs, 60\,s. Baseline comparison across algorithms.
+    \item \textbf{Traffic Spike}: Ramps 5$\rightarrow$80 VUs in 5\,s, holds 30\,s, ramps back.
+    \item \textbf{Stress Test}: Ramps from 5 to 300 VUs over 70\,s to find the saturation point.
+    \item \textbf{Failure Injection}: Constant 30 VUs with the latency-aware algorithm; worker-2 is killed at $t=20$\,s.
 \end{enumerate}
-
-\subsection{Metrics Collected}
-
-\begin{itemize}
-    \item Average latency, p95 latency, p99 latency (from k6 and load balancer)
-    \item Throughput (requests/second)
-    \item Error rate (percentage of failed requests)
-    \item Worker request distribution (how evenly traffic is spread)
-    \item Recovery time after failure (how quickly the system stabilizes)
-\end{itemize}
 
 \section{Results}
 
 \subsection{Scenario 1: Constant Load}
 
-% TODO: Replace with actual numbers after running experiments
+Table~\ref{tab:constant} shows results for 30~VUs over 60\,s. All latency and throughput numbers come from k6's summary export; traffic distribution is from the load balancer's own worker counters.
+
 \begin{table}[h]
-\caption{Constant Load Results (30 VUs, 60s)}
+\caption{Constant Load Results (30 VUs, 60\,s)}
 \label{tab:constant}
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
 Metric & Round-Robin & Least-Conn & Latency-Aware \\
 \midrule
-Avg latency (ms) & TODO & TODO & TODO \\
-p95 latency (ms) & TODO & TODO & TODO \\
-p99 latency (ms) & TODO & TODO & TODO \\
-Throughput (req/s) & TODO & TODO & TODO \\
-Error rate (\%) & TODO & TODO & TODO \\
+Avg latency (ms)          & 107.1 & 79.7  & 74.4  \\
+p95 latency (ms)          & 224.9 & 220.1 & 182.4 \\
+Throughput (req/s)        & 143.9 & 165.7 & 170.7 \\
+Error rate (\%)           & 0.0   & 0.0   & 0.0   \\
+Traffic to worker-3 (\%) & 33.3  & 13.4  & 4.9   \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Expected observation: Round-robin sends equal traffic to all workers including the slow worker-3, so it has higher tail latency. Least-connections and latency-aware should route less traffic to worker-3.
+Under constant moderate load, all three algorithms achieve zero errors, but their traffic distributions differ markedly. Round-robin routes exactly one-third of requests to each worker as expected. Least-connections reduces worker-3's share to 13.4\%, because its higher response time (180\,ms vs.\ 45\,ms) means it naturally accumulates more in-flight requests and is deprioritised by the min-connections selector. Latency-aware is the most aggressive: it routes only 4.9\% of traffic to worker-3, whose EWMA latency ({\raise.17ex\hbox{$\scriptstyle\sim$}}200\,ms) makes it score four times worse than the fast workers ({\raise.17ex\hbox{$\scriptstyle\sim$}}49\,ms).
+
+The performance impact of this routing is clear: latency-aware achieves 74.4\,ms average latency -- 30\% lower than round-robin's 107.1\,ms -- and 18.6\% higher throughput (170.7 vs.\ 143.9\,req/s). Least-connections falls in between, with 79.7\,ms average latency and 15\% higher throughput than round-robin.
 
 \subsection{Scenario 2: Traffic Spike}
 
-% TODO: Replace with actual numbers
+Table~\ref{tab:spike} shows spike-test results. The burst to 80~VUs pushes throughput up substantially for the adaptive algorithms while keeping errors at zero.
+
 \begin{table}[h]
-\caption{Spike Test Results (10 $\rightarrow$ 80 VUs)}
+\caption{Spike Test Results (5 $\rightarrow$ 80 VUs)}
 \label{tab:spike}
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
 Metric & Round-Robin & Least-Conn & Latency-Aware \\
 \midrule
-Avg latency (ms) & TODO & TODO & TODO \\
-p95 latency (ms) & TODO & TODO & TODO \\
-Error rate (\%) & TODO & TODO & TODO \\
+Avg latency (ms)          & 392.1 & 182.0 & 172.2 \\
+p95 latency (ms)          & 1401.8 & 485.3 & 362.3 \\
+Throughput (req/s)        & 114.5  & 216.3 & 225.8 \\
+Error rate (\%)           & 0.0    & 0.0   & 0.0   \\
+Traffic to worker-3 (\%) & 33.3   & 15.4  & 12.0  \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Expected observation: During the spike, latency-aware should react faster because it combines latency information with queue depth.
+The spike scenario exposes the full cost of blind routing. Round-robin continues to send one-third of traffic to the slow worker, which cannot keep up at 80 VUs; this backs up the queue and drives average latency to 392\,ms with a p95 of 1402\,ms -- likely due to queuing at the slow worker. Latency-aware and least-connections both limit worker-3 to 12--15\% of traffic, sustaining average latencies of 172\,ms and 182\,ms respectively, and throughput nearly double that of round-robin (216--226 vs.\ 114 req/s). No errors occur because even the slow worker completes within the 2000\,ms timeout at these concurrency levels.
 
 \subsection{Scenario 3: Stress Test}
 
-% TODO: Replace with actual numbers
+Table~\ref{tab:stress} shows stress-test results, where 300~VUs push the system well past its comfortable operating range.
+
 \begin{table}[h]
-\caption{Stress Test Results (5 $\rightarrow$ 150 VUs)}
+\caption{Stress Test Results (5 $\rightarrow$ 300 VUs)}
 \label{tab:stress}
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
 Metric & Round-Robin & Least-Conn & Latency-Aware \\
 \midrule
-Saturation point (VUs) & TODO & TODO & TODO \\
-p95 at 100 VUs (ms) & TODO & TODO & TODO \\
-Error rate at 150 VUs (\%) & TODO & TODO & TODO \\
+Avg latency (ms)          & 595.4 & 440.9 & 440.8 \\
+p95 latency (ms)          & 2524.7 & 2601.7 & 2276.5 \\
+Throughput (req/s)        & 173.3  & 231.7  & 228.7  \\
+Error rate (\%)           & 7.59   & 1.63   & 0.80   \\
+Traffic to worker-3 (\%) & 33.3   & 16.8   & 12.7   \\
+Workers healthy at end    & None   & All    & All    \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Expected observation: All algorithms eventually saturate, but adaptive ones should push the saturation point higher.
+Under extreme stress the differences are stark. Round-robin saturates all three workers equally, marking all of them unhealthy by the end of the test, and produces 7.59\% errors at only 173\,req/s. Both adaptive algorithms maintain all workers healthy throughout, achieve over 228\,req/s (32\% higher than round-robin), and keep error rates at 0.8--1.6\%.
+
+The latency-aware algorithm has a slight edge over least-connections in error rate (0.80\% vs.\ 1.63\%) and p95 latency (2277\,ms vs.\ 2602\,ms). Both algorithms route only 13--17\% of traffic to the slow worker, sparing the fast workers from the extra queuing that overwhelms round-robin.
 
 \subsection{Scenario 4: Failure Injection}
 
-% TODO: Replace with actual observations
-After crashing worker-2 at $t=20s$:
-\begin{itemize}
-    \item The load balancer detects the failure within [TODO] seconds (based on health check interval of 1s).
-    \item Error rate spikes briefly to [TODO]\% then drops to near zero.
-    \item Remaining traffic is redistributed to workers 1 and 3.
-    \item The latency-aware algorithm recovers fastest because it immediately penalizes the failing worker's score.
-\end{itemize}
+The experiment used the latency-aware algorithm with 30 VUs for 60\,s; worker-2 was killed at $t=20$\,s. Table~\ref{tab:failure} summarises the results.
+
+\begin{table}[h]
+\caption{Failure Injection Results (latency-aware, 30 VUs)}
+\label{tab:failure}
+\centering
+\begin{tabular}{@{}lc@{}}
+\toprule
+Metric & Value \\
+\midrule
+Worker crashed                     & worker-2 at $t=20$\,s \\
+Detection time                     & $<$1\,s (health-check interval) \\
+k6 avg latency (full test)        & 94.1\,ms \\
+k6 p95 latency (full test)        & 241.5\,ms \\
+k6 throughput                      & 153.6\,req/s \\
+Overall error rate (LB stats)      & 0.01\% (1 of 9252 requests) \\
+Worker-1 requests (no failures)    & 6\,462 \\
+Worker-2 requests (stopped after crash) & 1\,585 \\
+Worker-3 requests (no failures)    & 1\,205 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The failure injection experiment demonstrates near-perfect resilience. Worker-2 served 1585 requests before being crashed. After the crash, the health-check loop detected the failure within one second and stopped routing to worker-2. Only one request failed (a 502 proxy error) in the entire 9252-request test -- an overall failure rate of 0.01\%.
+
+After the crash, worker-1 absorbed the bulk of the redirected traffic (reaching 6462 total requests), while worker-3 received a secondary share (1205 requests). The latency-aware algorithm correctly identified worker-1 as the fastest remaining option (EWMA {\raise.17ex\hbox{$\scriptstyle\sim$}}67\,ms vs.\ worker-3's {\raise.17ex\hbox{$\scriptstyle\sim$}}215\,ms). The overall average latency of 94\,ms and p95 of 242\,ms show that the system continued operating normally throughout.
 
 \section{Discussion}
 
 \subsection{Key Findings}
 
 \begin{enumerate}
-    \item The latency-aware algorithm consistently provides the lowest tail latency (p95/p99) across all scenarios because it accounts for both response time and queue depth.
-    \item Least-connections works well when workers have similar speeds but underperforms with heterogeneous workers because it only looks at connection count, not actual speed.
-    \item Round-robin is the simplest and has the lowest overhead (no scoring computation) but cannot adapt to any runtime conditions.
+    \item \textbf{Adaptive algorithms consistently outperform round-robin.} Across all three non-failure scenarios, both least-connections and latency-aware routing reduced average latency, increased throughput, and (under stress) dramatically cut failure rates. The benefit appears even under moderate load, not only at saturation.
+
+    \item \textbf{Latency-aware routing most aggressively avoids slow workers.} By combining EWMA latency with in-flight count in a single score, the latency-aware algorithm sends only 5--13\% of traffic to the slow worker across all scenarios, compared to 13--17\% for least-connections and 33\% for round-robin. This translates directly into lower average latency and p95.
+
+    \item \textbf{Stress testing reveals correctness requirements.} At 300 VUs, round-robin drives all workers unhealthy; adaptive algorithms keep all workers healthy. The difference comes from the in-flight counter: adaptive algorithms avoid queuing too deeply at any single worker, preventing the timeout cascade that forces health checks to fail.
+
+    \item \textbf{Failure recovery is near-instantaneous.} The 1-second health-check interval is sufficient for practical crash detection. With the latency-aware algorithm, the system loses only one request during a complete worker crash, and re-balances traffic across the two survivors within seconds.
+
+    \item \textbf{Implementation correctness matters.} Two subtle bugs during development caused all algorithms to produce identical 33\% distributions: (a) updating EWMA with health-check latency polluted the routing signal, and (b) incrementing the in-flight counter after an asyncio yield point allowed concurrent coroutines to see stale zero counts. Both bugs had to be fixed for the algorithms to behave as intended.
 \end{enumerate}
 
 \subsection{Trade-offs}
 
 \begin{itemize}
-    \item \textbf{Overhead}: Round-robin has O(1) selection. Least-connections needs O(n) to find the minimum. Latency-aware also O(n) but with more computation per worker. With only 3 workers this is negligible, but at scale it matters.
-    \item \textbf{Stability}: The EWMA smoothing in latency-aware prevents oscillation (rapidly switching between workers). Without smoothing, a single slow request could cause the algorithm to avoid a healthy worker.
-    \item \textbf{Fairness}: Round-robin is perfectly fair (equal distribution). Adaptive algorithms intentionally create unfair distribution to improve overall performance.
+    \item \textbf{Throughput vs.\ tail latency under stress:} All algorithms exhibit high p95 values at 300 VUs ($>$2000\,ms) because the system is overloaded. The adaptive algorithms maintain lower \emph{average} latency and error rates because they avoid saturating the slow worker, but cannot eliminate tail latency when fast workers are also overloaded.
+    \item \textbf{Overhead:} Round-robin is O(1); least-connections and latency-aware are O($n$) over healthy workers. With 3 workers this is negligible; at hundreds of backends it would need optimisation (e.g., a min-heap).
+    \item \textbf{EWMA convergence:} With $\alpha=0.25$, the EWMA takes roughly 10--15 requests to converge from the initial 100\,ms to the true value. During this warmup, routing is less informed. Shorter-lived tests or frequent restarts would penalise latency-aware more than the other algorithms.
 \end{itemize}
 
 \subsection{Limitations}
 
 \begin{itemize}
-    \item Our testbed uses only 3 workers. In production, load balancers handle hundreds or thousands of backends.
-    \item The workload is synthetic (configurable delay + CPU). Real analytics workloads have more complex patterns.
-    \item We run everything on a single Docker host, so network latency between components is negligible. In a real distributed system, network jitter would be a factor.
-    \item The EWMA alpha value (0.25) was chosen empirically. A proper study would need to test multiple values.
-    \item Our experiments run for 60 seconds. Long-running production workloads might exhibit different patterns.
+    \item \textbf{Single-host deployment.} All containers share the same 4-core CPU and single network interface. At high VU counts, CPU contention between k6, the load balancer, and the workers may affect results. On a real distributed system, network latency and independent CPU pools would change the picture.
+    \item \textbf{Fixed EWMA $\alpha$.} The value 0.25 was chosen empirically; a systematic sweep would be needed to characterise the stability/responsiveness trade-off.
+    \item \textbf{Rolling latency window.} The load balancer's p95/p99 statistics cover only the last 1000 requests, so values captured at the end of a spike or stress run reflect the final load level, not the worst point during the test.
+    \item \textbf{Short experiments.} At 60--70\,s per run, long-term stability patterns and EWMA re-convergence after transient events cannot be studied.
+    \item \textbf{No retry logic.} Failed requests are not retried. A production load balancer would combine routing with a retry budget to further reduce client-visible failures.
 \end{itemize}
 
 \subsection{Safety, Privacy, and Deployment Notes}
 
 \begin{itemize}
-    \item \textbf{Failure assumptions}: We assume fail-stop behavior (a crashed worker stops responding). Byzantine failures (worker returns wrong data) are not handled.
-    \item \textbf{Attack surface}: The load balancer exposes management endpoints (\texttt{/lb/stats}, \texttt{/lb/workers}) that reveal internal state. In production, these should be access-controlled.
-    \item \textbf{Operational safety}: The crash endpoint (\texttt{/api/v1/crash}) exists only for testing. In production, failure injection should be behind authentication.
-    \item \textbf{Reproducibility}: All experiments are scripted and containerized. The same results can be obtained on any machine with Docker installed, though absolute numbers will differ.
-    \item \textbf{Not production-ready}: This is a course project demonstrating concepts. A production load balancer needs TLS termination, connection pooling, circuit breakers, retries, and much more.
+    \item The crash endpoint (\texttt{/api/v1/crash}) and management endpoints (\texttt{/lb/stats}, \texttt{/lb/workers}) expose internal system state and must be access-controlled in production.
+    \item The system assumes fail-stop workers. Byzantine failures (wrong data returned) are not handled.
+    \item All experiments are scripted and containerised; results are reproducible on any Docker host, though absolute latency numbers will vary with hardware.
+    \item This is a course prototype. A production load balancer additionally requires TLS termination, connection pooling, circuit breakers, and retry budgets.
 \end{itemize}
 
 \section{Conclusion}
 
-We built a containerized distributed system testbed to compare three load-balancing algorithms: round-robin, least-connections, and latency-aware routing. Through four experiment scenarios (constant load, traffic spikes, stress testing, and failure injection), we showed that the latency-aware algorithm with EWMA scoring provides the best trade-off between response time and stability, especially in conditions where workers are not uniform or when failures happen.
+We designed and evaluated a containerised load-balancing testbed comparing round-robin, least-connections, and latency-aware routing under four workload scenarios. The central finding is that adaptive algorithms provide measurable and substantial benefits in heterogeneous deployments, even under moderate load. Latency-aware routing reduces average latency by 30\% and increases throughput by 19\% at constant moderate load (30 VUs) compared to round-robin. Under extreme stress (300 VUs), both adaptive algorithms sustain 32\% higher throughput with 5--10$\times$ lower failure rates and keep all workers healthy, while round-robin saturates every worker and drives failure rates above 7\%. In the failure-injection experiment, the latency-aware algorithm recovers from a complete worker crash with a single failed request out of 9252 (0.01\% failure rate).
 
-The main takeaway is that a load balancer that uses real-time feedback (actual response times) makes better decisions than one that only counts connections or blindly rotates. The cost is slightly more complexity in the scoring logic, but with modern hardware this overhead is negligible for small to medium clusters.
+A secondary finding is that implementation correctness is essential: two subtle bugs (health-check latency polluting the EWMA, and in-flight counter incremented after an asyncio yield point) caused all algorithms to behave identically. Fixing these two bugs was necessary for the algorithms to exhibit their intended differentiated behaviour.
 
-Future work could explore reinforcement-learning-based scheduling, predictive autoscaling, or cost-aware placement in cloud environments.
+Future work could explore shorter health-check intervals, circuit-breaker patterns, thread-pool isolation for CPU-bound workers, reinforcement-learning-based routing under non-stationary workloads, and the effect of varying the EWMA decay factor $\alpha$.
 
 \begin{thebibliography}{10}
 
