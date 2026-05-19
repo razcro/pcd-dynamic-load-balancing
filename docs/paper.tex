@@ -7,6 +7,14 @@
 \usepackage{hyperref}
 \usepackage{array}
 \usepackage{multirow}
+\usepackage{listings}
+\lstset{
+  basicstyle=\footnotesize\ttfamily,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=flexible,
+  keepspaces=true
+}
 
 \title{Dynamic Load Balancing for a Real-Time Analytics Dashboard:\\
 A Comparative Evaluation of Round-Robin, Least-Connections,\\
@@ -268,7 +276,7 @@ The load balancer is a FastAPI application with a single catch-all
 route that proxies all non-management requests to a selected worker.
 Per-worker state is maintained in a dataclass:
 
-\begin{verbatim}
+\begin{lstlisting}
 @dataclass
 class Worker:
     name: str
@@ -278,7 +286,7 @@ class Worker:
     ewma_latency_ms: float = 100.0
     total_requests: int = 0
     failed_requests: int = 0
-\end{verbatim}
+\end{lstlisting}
 
 The \texttt{select\_worker()} coroutine filters to healthy workers,
 then applies the active routing policy. A background
@@ -312,11 +320,11 @@ the signal that allows latency-aware routing to prefer fast workers.
 The correct update location is inside \texttt{proxy\_to\_worker()},
 after the upstream response is received:
 
-\begin{verbatim}
+\begin{lstlisting}
 duration_ms = (time.perf_counter() - started) * 1000
-worker.ewma_latency_ms = ewma(worker.ewma_latency_ms,
-                               duration_ms)
-\end{verbatim}
+worker.ewma_latency_ms = ewma(
+    worker.ewma_latency_ms, duration_ms)
+\end{lstlisting}
 
 The \texttt{run\_health\_check()} function updates only
 \texttt{worker.healthy} and \texttt{worker.last\_health\_check\_at}.
@@ -334,13 +342,13 @@ for all workers and may route to the same worker simultaneously.
 
 The fix is to increment the counter immediately after worker selection:
 
-\begin{verbatim}
-worker = select_worker()      # select before awaits
-worker.in_flight += 1         # increment immediately
+\begin{lstlisting}
+worker = select_worker()   # select before awaits
+worker.in_flight += 1      # increment immediately
 worker.total_requests += 1
 stats.total_requests += 1
-body = await request.body()   # yield point (safe now)
-\end{verbatim}
+body = await request.body()  # yield point (safe now)
+\end{lstlisting}
 
 \subsection{Experiment Script Correctness}
 
@@ -355,10 +363,10 @@ and recreated the load-balancer container, overwriting the intended
 algorithm. This was fixed by prefixing every \texttt{docker compose}
 invocation in the experiment loop with the appropriate variable:
 
-\begin{verbatim}
+\begin{lstlisting}
 ALGORITHM="$algorithm" docker compose \
     --profile loadtest run --rm k6 run ...
-\end{verbatim}
+\end{lstlisting}
 
 \subsection{Observability and Dashboard}
 
