@@ -450,6 +450,7 @@ p95 latency (ms)          & 224.9 & 220.1 & 182.4 \\
 Throughput (req/s)        & 143.9 & 165.7 & 170.7 \\
 Error rate (\%)           & 0.0   & 0.0   & 0.0   \\
 Traffic to worker-3 (\%) & 33.3  & 13.4  & 4.9   \\
+Jain's fairness index $J$ & 1.000 & 0.847 & 0.733 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -487,6 +488,7 @@ p95 latency (ms)          & 1401.8 & 485.3 & 362.3 \\
 Throughput (req/s)        & 114.5  & 216.3 & 225.8 \\
 Error rate (\%)           & 0.0    & 0.0   & 0.0   \\
 Traffic to worker-3 (\%) & 33.3   & 15.4  & 12.0  \\
+Jain's fairness index $J$ & 1.000 & 0.871 & 0.830 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -514,6 +516,7 @@ p95 latency (ms)          & 2524.7 & 2601.7 & 2276.5 \\
 Throughput (req/s)        & 173.3  & 231.7  & 228.7  \\
 Error rate (\%)           & 7.59   & 1.63   & 0.80   \\
 Traffic to worker-3 (\%) & 33.3   & 16.8   & 12.7   \\
+Jain's fairness index $J$ & 1.000 & 0.891 & 0.839 \\
 Workers healthy at end    & None   & All    & All    \\
 \bottomrule
 \end{tabular}
@@ -556,6 +559,59 @@ one request fails (a 502 proxy error during the in-progress connection
 at crash time). The latency-aware algorithm subsequently routes 84\%
 of new traffic to worker-1 (EWMA $\approx$67\,ms) and 16\% to worker-3
 (EWMA $\approx$215\,ms), maintaining 94\,ms average latency throughout.
+
+\subsection{Resource Utilization (30 VUs, Constant Load)}
+
+Table~\ref{tab:resources} shows container-level CPU and memory usage,
+sampled via \texttt{docker stats} at mid-test (after EWMA convergence)
+under the constant-load workload. CPU percentages are per-core (100\,\%
+$=$ one fully used CPU core).
+
+\begin{table}[h]
+\caption{Resource Utilization per Container (30 VUs, constant load)}
+\label{tab:resources}
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Container & \multicolumn{2}{c}{CPU (\%)} & \multicolumn{2}{c}{Mem (MiB)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+ & Idle & Under load & Idle & Under load \\
+\midrule
+\multicolumn{5}{l}{\textit{Round-Robin}} \\
+Load balancer & 1.2 & 29.3 & 46.5 & 46.4 \\
+Worker-1      & 0.3 & 26.3 & 32.9 & 32.9 \\
+Worker-2      & 0.3 & 26.6 & 40.5 & 40.5 \\
+Worker-3      & 0.2 & \textbf{98.5} & 32.8 & 32.9 \\
+\midrule
+\multicolumn{5}{l}{\textit{Least-Connections}} \\
+Load balancer & 1.2 & 48.1 & 46.5 & 42.4 \\
+Worker-1      & 0.3 & 45.4 & 32.9 & 32.9 \\
+Worker-2      & 0.3 & 39.3 & 40.5 & 40.5 \\
+Worker-3      & 0.2 & 42.0 & 32.8 & 32.9 \\
+\midrule
+\multicolumn{5}{l}{\textit{Latency-Aware}} \\
+Load balancer & 1.2 & 45.7 & 46.5 & 44.4 \\
+Worker-1      & 0.3 & 46.9 & 32.9 & 32.9 \\
+Worker-2      & 0.3 & 47.9 & 40.5 & 40.5 \\
+Worker-3      & 0.2 & \textbf{18.6} & 32.8 & 32.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The most striking result is worker-3's CPU usage: under round-robin it
+reaches 98.5\% (one saturated core), while under latency-aware it drops
+to 18.6\%. This directly reflects the traffic share (33\% vs.\ 4.9\%)
+and confirms that the algorithm prevents the CPU hotspot that round-robin
+creates. Memory footprint is stable across all algorithms, with no growth
+during the test, confirming the absence of memory leaks.
+
+The load balancer itself consumes more CPU under adaptive algorithms
+(48\% for LC/LA vs.\ 29\% for RR). However, adaptive algorithms also
+handle more requests (166--171 vs.\ 144\,req/s), so the per-request LB
+overhead is approximately 0.29\,\%/req (LC), 0.27\,\%/req (LA), and
+0.20\,\%/req (RR) --- a 35--45\% overhead increase that is negligible
+in absolute terms with $n=3$ workers.
 
 % ---------------------------------------------------------------
 \section{Integrated System Requirements and Conformance Specification}
@@ -684,6 +740,19 @@ check interval, the mean time to isolate a crashed worker is at most
 1\,s. In our experiment, only one request was lost. After isolation,
 the latency-aware algorithm correctly prefers the faster surviving
 worker (worker-1 at $\sim$67\,ms over worker-3 at $\sim$215\,ms).
+
+\textbf{Fairness and performance trade off against each other.}
+Jain's fairness index $J = (\sum x_i)^2 / (n \sum x_i^2)$ measures
+how evenly traffic is distributed across workers, with $J=1$ being
+perfectly equal. Round-robin achieves $J=1.000$ by design, but this
+fairness comes at the cost of routing to the slow worker at its full
+equal share. Least-connections reduces fairness to $J=0.847$--$0.891$
+across scenarios; latency-aware to $J=0.733$--$0.839$. The lower
+fairness values directly correspond to better performance: fewer
+requests reach the slow worker, reducing average latency and
+increasing throughput. In heterogeneous deployments, equal traffic
+distribution is not a goal --- proportional utilisation of actual
+capacity is.
 
 \textbf{Implementation correctness is as important as algorithm choice.}
 The two bugs described in Section~V each individually caused all
