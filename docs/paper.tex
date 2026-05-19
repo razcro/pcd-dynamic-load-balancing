@@ -254,7 +254,7 @@ browser dashboard without SSH access.
 
 Each worker exposes three endpoints:
 \begin{itemize}
-    \item \texttt{GET /api/v1/analytics/event?delay\_ms=\&cpu\_ms=} ---
+    \item \texttt{GET /api/v1/analytics/event}\\\texttt{?delay\_ms=\&cpu\_ms=} ---
     processes a synthetic analytics event. The handler first executes a
     synchronous busy-loop for \texttt{cpu\_ms} milliseconds (blocking the
     asyncio event loop), then awaits \texttt{asyncio.sleep(delay\_ms/1000)}.
@@ -637,7 +637,7 @@ and \textbf{may} for optional capabilities.
 \centering
 \small
 \renewcommand{\arraystretch}{1.15}
-\begin{tabular}{@{}p{0.5cm}p{5.5cm}p{1.0cm}p{2.8cm}p{3.5cm}@{}}
+\begin{tabular}{@{}p{0.5cm}p{4.9cm}p{1.6cm}p{3.2cm}p{3.1cm}@{}}
 \toprule
 \textbf{ID} & \textbf{Requirement} & \textbf{Pri.} & \textbf{Verification} & \textbf{Evidence} \\
 \midrule
@@ -669,13 +669,13 @@ R9  & Workers \textbf{shall} support a configurable \texttt{SLOWDOWN\_FACTOR} to
     & Must & Compare EWMA: worker-3 $\approx$ 4$\times$ workers 1--2
     & All scenarios: worker-3 EWMA $\approx$190--200\,ms vs.\ $\approx$49\,ms. \\
 R10 & The system \textbf{should} support deliberate worker crash for failure testing.
-    & Should & POST \texttt{/api/v1/crash} returns; container stops
+    & Should & POST \texttt{/api/v1/crash}; container stops
     & S4: worker-2 crashed at $t=20$\,s; marked unhealthy within 1\,s. \\
 R11 & The load balancer \textbf{should} track per-worker EWMA latency for routing decisions.
-    & Should & Inspect \texttt{ewma\_latency\_ms} field in \texttt{/lb/workers}
+    & Should & Inspect \texttt{ewma\_latency\_ms} in \texttt{/lb/workers}
     & Tracked and verified across all scenarios; drives LA routing. \\
 R12 & The system \textbf{may} expose a browser-accessible dashboard for live monitoring and test control.
-    & Optional & Manual browser test at \texttt{/dashboard}
+    & Optional & Browser test at \texttt{/dashboard}
     & Dashboard deployed; accessible at \texttt{pcd.razc.ro}. \\
 \bottomrule
 \end{tabular}
@@ -711,7 +711,7 @@ C4 & Prometheus metrics endpoint conforms to text format
    & \texttt{curl /lb/metrics} produces valid Prometheus exposition with per-worker labels (verified; Grafana ingests successfully). \\
 C5 & Experiment reproducibility
    & R8, R9
-   & Running \texttt{bash scripts/run-experiments.sh} produces 37 result files covering all algorithm--scenario combinations without manual intervention. \\
+   & Running the experiment script produces 37 result files covering all algorithm--scenario combinations without manual intervention. \\
 \bottomrule
 \end{tabular}
 \end{table}
