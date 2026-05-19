@@ -179,6 +179,11 @@ def worker_to_dict(worker: Worker) -> Dict[str, object]:
     }
 
 
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(status_code=204)
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard() -> str:
     with open("static/dashboard.html", "r", encoding="utf-8") as file:

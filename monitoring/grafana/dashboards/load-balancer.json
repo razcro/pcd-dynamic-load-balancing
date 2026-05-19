@@ -17,6 +17,7 @@
           "refId": "A"
         }
       ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
       "fieldConfig": {
         "defaults": { "unit": "short" },
         "overrides": []
@@ -33,6 +34,7 @@
           "refId": "A"
         }
       ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
       "fieldConfig": {
         "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "red" } },
         "overrides": []
@@ -49,6 +51,7 @@
           "refId": "A"
         }
       ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
       "fieldConfig": {
         "defaults": { "unit": "ms" },
         "overrides": []
@@ -65,6 +68,7 @@
           "refId": "A"
         }
       ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
       "fieldConfig": {
         "defaults": { "unit": "ms" },
         "overrides": []
